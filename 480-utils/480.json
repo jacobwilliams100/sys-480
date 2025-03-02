@@ -1,0 +1,7 @@
+{
+    "vcenter_server" : "vcenter.jake.local",
+    "vm_folder" : "Base",
+    "esxi_host" : "esxi.jake.local",
+    "default_network" : "480-WAN",
+    "default_datastore" : "datastore1-super10"
+}
