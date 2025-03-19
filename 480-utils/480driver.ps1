@@ -38,6 +38,10 @@ while ($continue) {
     Write-Host "0. Exit"
     Write-Host "1. Select a VM"
     Write-Host "2. Clone a VM"
+    Write-Host "3. Create a New Network"
+    Write-Host "4. Get VM IP/MAC Address"
+    Write-Host "5. VM Power Management"
+    Write-Host "6. Change VM Network"
     $choice = Read-Host "Choose an option"
 
     # Process user's choice
@@ -57,6 +61,22 @@ while ($continue) {
         Write-Host "Clone VM"
         # Pass all required parameters from configuration
         Clone-480VM -folder $conf.vm_folder -esxiHost $conf.esxi_host -datastore $conf.default_datastore
+    }
+    elseif ($choice -eq "3") {
+        # #Network creation option
+        Handle-NetworkCreation -esxiHost $conf.esxi_host
+    }
+    elseif ($choice -eq "4") {
+        # Get VM IP/MAC option
+        Handle-IPLookup -folder $conf.vm_folder
+    }
+    elseif ($choice -eq "5") {
+        # VM power management option
+        Handle-VMPower
+    }
+    elseif ($choice -eq "6") {
+        # Change VM network option
+        Handle-SetNetwork
     }
     else {
         # Invalid option handling - loop will continue and prompt again

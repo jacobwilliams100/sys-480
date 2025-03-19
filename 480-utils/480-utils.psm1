@@ -451,3 +451,456 @@ Function Clone-480VM([string] $folder, [string] $esxiHost, [string] $datastore)
         Write-Host "Invalid selection. Please enter 'F' for Full Clone or 'L' for Linked Clone."
     }
 }
+
+# Creates Port Group and Virtual Switch
+Function New-Network([string] $switchName, [string] $portGroupName, [string] $esxiHost)
+{
+    # Validate parameters
+    if ([string]::IsNullOrEmpty($switchName) -or [string]::IsNullOrEmpty($portGroupName)) {
+        Write-Host "Error: Switch name and port group name are required." -ForegroundColor Red
+        return $null
+    }
+    
+    # Get the VMHost object using provided hostname/IP of ESXI
+    $vmhost = Get-VMHost -Name $esxiHost -ErrorAction SilentlyContinue
+    if (!$vmhost) {
+        Write-Host "Error: VMHost $esxiHost not found." -ForegroundColor Red
+        return $null
+    }
+    
+    try {
+        # Check if virtual switch already exists
+        $vSwitch = Get-VirtualSwitch -Name $switchName -VMHost $vmhost -ErrorAction SilentlyContinue
+        
+        # Create virtual switch if it doesn't exist
+        if (!$vSwitch) {
+            Write-Host "Creating new Virtual Switch: $switchName..." -ForegroundColor Cyan
+            # Creates nte vSWitch on specified VM host from 480.json
+            $vSwitch = New-VirtualSwitch -Name $switchName -VMHost $vmhost -ErrorAction Stop
+            Write-Host "Virtual Switch $switchName created successfully." -ForegroundColor Green
+        } else {
+            Write-Host "Virtual Switch $switchName already exists. Using existing switch." -ForegroundColor Yellow
+        }
+        
+        # Check if port group already exists
+        $portGroup = Get-VirtualPortGroup -Name $portGroupName -VirtualSwitch $vSwitch -ErrorAction SilentlyContinue
+        
+        # Create port group if it doesn't exist
+        if (!$portGroup) {
+            Write-Host "Creating new Port Group: $portGroupName..." -ForegroundColor Cyan
+            # Creates port group on specified switch from before
+            $portGroup = New-VirtualPortGroup -Name $portGroupName -VirtualSwitch $vSwitch -ErrorAction Stop
+            Write-Host "Port Group $portGroupName created successfully." -ForegroundColor Green
+        } else {
+            Write-Host "Port Group $portGroupName already exists. Using existing port group." -ForegroundColor Yellow
+        }
+        
+        return $portGroup
+    }
+    catch {
+        # Catch any errors during network creation and display to user
+        Write-Host "Error creating network components: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
+# Provides user interface for creating vswitch/portgroup
+Function Handle-NetworkCreation([string] $esxiHost)
+{
+    Write-Host "Create a New Network"
+    # Prompts user for switch name
+    $switchName = Read-Host "Enter a name for the Virtual Switch"
+    # Prompts user for port group name
+    $portGroupName = Read-Host "Enter a name for the Port Group"
+    
+    # Create the network, calling the New-Network function
+    $result = New-Network -switchName $switchName -portGroupName $portGroupName -esxiHost $esxiHost
+    
+    # Display resulting Switch and Port Group, (but only if successful)
+    if ($result) {
+        Write-Host "Network created successfully!" -ForegroundColor Green
+        Write-Host "Switch Name: $switchName" -ForegroundColor Cyan
+        Write-Host "Port Group Name: $portGroupName" -ForegroundColor Cyan
+    }
+}
+
+# Retrieves IP and MAC information from a VM's first network addtress
+Function Get-IP([string] $vmName)
+{
+    # Validate that VM name was provided
+
+    if ([string]::IsNullOrEmpty($vmName)) {
+        Write-Host "Error: VM name is required." -ForegroundColor Red
+        return $null
+    }
+    
+    try {
+        # Get the VM using provided name
+        # ErrorAction catches errors
+        $vm = Get-VM -Name $vmName -ErrorAction Stop
+        
+        # Get network adapters for the VM, stopping for error if it has none
+        $networkAdapters = Get-NetworkAdapter -VM $vm -ErrorAction Stop
+        
+        if (!$networkAdapters -or $networkAdapters.Count -eq 0) {
+            Write-Host "Error: No network adapters found for VM $vmName." -ForegroundColor Red
+            return $null
+        }
+        
+        # Get the first network adapter (index 0)
+        # Just the one for now
+        $firstAdapter = $networkAdapters[0]
+        
+        # Get the MAC address
+        # Available regarless of PowerState
+        $macAddress = $firstAdapter.MacAddress
+        
+        # Initilize IP address with default message, will be updated if actual IP is detected
+        $ipAddress = "Not available"
+        
+        # Try to get the guest IP - this only works if VMware Tools is installed and the VM is powered on
+        if ($vm.PowerState -eq "PoweredOn" -and $vm.Guest.State -eq "Running") {
+            # Check if there are any IP addresses available
+            if ($vm.Guest.IPAddress -and $vm.Guest.IPAddress.Length -gt 0) {
+                # Get the first IP address that's not a link-local address
+                # Filters out IPV4/IPV6 link-locals
+                $ipAddress = $vm.Guest.IPAddress | Where-Object { -not $_.StartsWith("fe80:") -and -not $_.StartsWith("169.254.") } | Select-Object -First 1
+                
+                # If no non-link-local IP is found, just get the first one
+                if ([string]::IsNullOrEmpty($ipAddress)) {
+                    $ipAddress = $vm.Guest.IPAddress[0]
+                }
+            } else {
+                $ipAddress = "No IP assigned"
+            }
+        } else {
+            $ipAddress = "VM not running or VMware Tools not available"
+        }
+        
+        # Create and return a custom object with the information
+        $result = [PSCustomObject]@{
+            VMName = $vmName
+            IPAddress = $ipAddress
+            MACAddress = $macAddress
+            NetworkAdapter = $firstAdapter.Name
+            PortGroup = $firstAdapter.NetworkName
+        }
+        
+        return $result
+    }
+    catch {
+        # Catch and display any errors occuring during information retrieval
+        Write-Host "Error retrieving network information: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
+# Provide interface for retrieving IP and MAC from Get-IP
+Function Handle-IPLookup([string] $folder)
+{
+    Write-Host "Get VM IP and MAC Address"
+    
+    # Present 2 options for selecting a VM
+    Write-Host "1. Select VM from list"
+    Write-Host "2. Enter VM name directly"
+    $selectionMethod = Read-Host "Choose an option"
+    
+    if ($selectionMethod -eq "1") {
+        # Get all VMs in environment instead of using Select-VM function
+        $allVMs = Get-VM
+        
+        # Check if any VMs were found
+        if ($allVMs.Count -eq 0) {
+            Write-Host "No VMs found in the environment." -ForegroundColor Yellow
+            return
+        }
+        
+        # Display list of VMs with PowerState indicators (important because only PoweredOn VMs can show their IP)
+        $index = 1
+        foreach ($vm in $allVMs) {
+            # Add power state information using green for on, red for off
+            if ($vm.PowerState -eq "PoweredOn") {
+                Write-Host "[$index] $($vm.Name)" -NoNewline
+                Write-Host " [ON]" -ForegroundColor Green
+            } else {
+                Write-Host "[$index] $($vm.Name)" -NoNewline
+                Write-Host " [OFF]" -ForegroundColor Red
+            }
+            $index++
+        }
+        
+        # Gets user selection index number
+        $pick_index = Read-Host "which index number [x] do you wish to pick?"
+        
+        # Validate the input is a number and in the valid range
+        if (-not [int]::TryParse($pick_index, [ref]$null) -or [int]$pick_index -lt 1 -or [int]$pick_index -gt $allVMs.Count) {
+            Write-Host "Invalid selection. Please enter a number between 1 and $($allVMs.Count)." -ForegroundColor Red
+            return
+        }
+        
+        # Get selected VM and retrieve its network information
+        $selectedVM = $allVMs[[int]$pick_index - 1]
+        if ($selectedVM) {
+            $result = Get-IP -vmName $selectedVM.Name
+        }
+    }
+    else {
+        # Option 2: Enter VM name directly
+        $vmName = Read-Host "Enter the name of the VM"
+        
+        # Check if VM exists before querying information
+        try {
+            $vm = Get-VM -Name $vmName -ErrorAction Stop
+            $result = Get-IP -vmName $vmName
+        }
+        catch {
+            Write-Host "VM with name '$vmName' not found. Please check the name and try again." -ForegroundColor Red
+            return
+        }
+    }
+    
+    # Display network information results
+    if ($result) {
+        Write-Host "`nVM Network Information:" -ForegroundColor Green
+        Write-Host "VM Name: $($result.VMName)" -ForegroundColor Cyan
+        Write-Host "IP Address: $($result.IPAddress)" -ForegroundColor Cyan
+        Write-Host "MAC Address: $($result.MACAddress)" -ForegroundColor Cyan
+        Write-Host "Network Adapter: $($result.NetworkAdapter)" -ForegroundColor Cyan
+        Write-Host "Port Group: $($result.PortGroup)" -ForegroundColor Cyan
+    }
+}
+
+# Provides user interface for managing VM powerstate
+Function Handle-VMPower()
+{
+    # Gets all available VMs and displays power state
+    $allVMs = Get-VM
+    Write-Host "Available VMs:"
+    $index = 1
+    foreach ($vm in $allVMs) {
+        # Determine VM power state and sets red for off and green for on
+        $state = if ($vm.PowerState -eq "PoweredOn") { "[ON]" } else { "[OFF]" }
+        $color = if ($vm.PowerState -eq "PoweredOn") { "Green" } else { "Red" }
+
+        # Displays VM with index and powerstate color/indicator
+        Write-Host "[$index] $($vm.Name)" -NoNewline
+        Write-Host " $state" -ForegroundColor $color
+        $index++
+    }
+    
+    # Get user's VM selection by number
+    $vmIndex = Read-Host "Select VM by number"
+    if (-not [int]::TryParse($vmIndex, [ref]$null) -or [int]$vmIndex -lt 1 -or [int]$vmIndex -gt $allVMs.Count) {
+        Write-Host "Invalid selection." -ForegroundColor Red
+        return
+    }
+    
+    # Gets selected VM object and extracts its name
+    $selectedVM = $allVMs[[int]$vmIndex - 1]
+    $vmName = $selectedVM.Name
+    
+    # Displays current powerstate of selected VM
+    Write-Host "Current state: $($selectedVM.PowerState)"
+    # Presents user with action options
+    Write-Host "1. Start VM"
+    Write-Host "2. Stop VM (graceful)"
+    Write-Host "3. Stop VM (force)"
+    $action = Read-Host "Select action"
+    
+    # Perform selected action
+    if ($action -eq "1") {
+        # Start VM
+        Start-480VM -vmName $vmName
+    }
+    elseif ($action -eq "2") {
+        # Stop VM (gracefully)
+        Stop-480VM -vmName $vmName -useForce $false
+    }
+    elseif ($action -eq "3") {
+        # Stop VM (forcefully)
+        Stop-480VM -vmName $vmName -useForce $true
+    }
+    else {
+        # Invalid selection
+        Write-Host "Invalid action." -ForegroundColor Red
+    }
+}
+
+# Powers on VM by name
+Function Start-480VM([string] $vmName)
+{
+    try {
+        # Get the VM object by name via Get-VM cmdlet
+        # Erroraction to catch errors
+        $vm = Get-VM -Name $vmName -ErrorAction Stop
+        
+        # Check if already powered on
+        if ($vm.PowerState -eq "PoweredOn") {
+            # Tells user if VM is already on
+            Write-Host "VM '$vmName' is already powered on." -ForegroundColor Yellow
+            return
+        }
+        
+        # Start the VM and suppress output with out-null to avoid crowding CLI
+        Write-Host "Starting VM '$vmName'..." -ForegroundColor Cyan
+        Start-VM -VM $vm -ErrorAction Stop | Out-Null
+        # Confirms success to user
+        Write-Host "VM '$vmName' started successfully." -ForegroundColor Green
+    }
+    catch {
+        # Catches any errors occuring during process
+        Write-Host "Error starting VM '$vmName': $_" -ForegroundColor Red
+    }
+}
+
+# Powers off a virtual machine by name
+Function Stop-480VM
+{
+    param(
+        # Name of VM to stop
+        [Parameter(Mandatory=$true)]
+        [string]$vmName,
+        
+        # Whether to force poweroff or graceful shutdown from handler function
+        # Default to false (graceful)
+        [Parameter(Mandatory=$false)]
+        [bool]$useForce = $false
+    )
+    
+    try {
+        # Get the VM by name using Get-VM
+        # ErrorAction ensures errors are caught
+        $vm = Get-VM -Name $vmName -ErrorAction Stop
+        
+        # Check if already powered off
+        if ($vm.PowerState -eq "PoweredOff") {
+            # Inform user if VM is already stopped
+            Write-Host "VM '$vmName' is already powered off." -ForegroundColor Yellow
+            return
+        }
+        
+        # Stop the VM, depends on graceful vs forceful
+        if ($useForce) {
+            # Force power off (uses vSphere API directly)
+            Write-Host "Force stopping VM '$vmName'..." -ForegroundColor Cyan
+            $vm.ExtensionData.PowerOffVM() | Out-Null
+            # Confirm success to user
+            Write-Host "VM '$vmName' force stopped successfully." -ForegroundColor Green
+        } else {
+            # Graceful shutdown
+            # sends shutdown signal to guest OS
+            # only works with VM tools installed
+            Write-Host "Gracefully stopping VM '$vmName'..." -ForegroundColor Cyan
+            # -Confirm:$false prvents prompting for confirmation
+            Shutdown-VMGuest -VM $vm -Confirm:$false | Out-Null
+            # Inform user that shutdown process has been initiated
+            Write-Host "Shutdown signal sent to VM '$vmName'." -ForegroundColor Green
+        }
+    }
+    catch {
+        # If any error occurs during process, display to user
+        Write-Host "Error stopping VM '$vmName': $_" -ForegroundColor Red
+    }
+}
+
+# Changes netork connection of any specified network adapter on VM
+Function Set-Network([string] $vmName, [string] $networkName, [int] $adapterIndex = 0)
+{
+    try {
+        # Get the VM object by name
+        $vm = Get-VM -Name $vmName -ErrorAction Stop
+        
+        # Get all network adapters for the VM
+        $adapters = Get-NetworkAdapter -VM $vm -ErrorAction Stop
+        
+        # Check if there are any adapters
+        if ($adapters.Count -eq 0) {
+            Write-Host "VM '$vmName' has no network adapters." -ForegroundColor Red
+            return
+        }
+        
+        # Check if the specified adapter index is valid
+        if ($adapterIndex -lt 0 -or $adapterIndex -ge $adapters.Count) {
+            Write-Host "Invalid adapter index. Valid range: 0 to $($adapters.Count - 1)" -ForegroundColor Red
+            return
+        }
+        
+        # Get the specified adapter for this index
+        $adapter = $adapters[$adapterIndex]
+        
+        # Display the current network before making changes
+        Write-Host "Adapter: $($adapter.Name)" -ForegroundColor Cyan
+        Write-Host "Current network: $($adapter.NetworkName)" -ForegroundColor Cyan
+        
+        # Inform the user about the upcoming change
+        Write-Host "Changing to network: $networkName" -ForegroundColor Cyan
+        
+        # Change the network with Set-NetworkAdapter
+        Set-NetworkAdapter -NetworkAdapter $adapter -NetworkName $networkName -Confirm:$false | Out-Null
+        
+        # Confirm success to user
+        Write-Host "Network changed successfully." -ForegroundColor Green
+    }
+    catch {
+        # Display errors that may have occurrsed.
+        Write-Host "Error: $_" -ForegroundColor Red
+    }
+}
+
+Function Handle-SetNetwork()
+{
+    # Display available VMs for user to select from
+    $allVMs = Get-VM
+    Write-Host "Available VMs:" -ForegroundColor Cyan
+    $index = 1
+    foreach ($vm in $allVMs) {
+        # Number each VM for easy selection
+        Write-Host "[$index] $($vm.Name)"
+        $index++
+    }
+    
+    # Get VM selection and convert to array index
+    $vmIndex = Read-Host "Select VM by number"
+    $selectedVM = $allVMs[[int]$vmIndex - 1]
+    
+    # Get all network adapters for the selected VM
+    $adapters = Get-NetworkAdapter -VM $selectedVM
+    
+    # If VM has multiple adapters, let user select which to change
+    if ($adapters.Count -gt 1) {
+        # Displays all adapters wit htheir current networks
+        Write-Host "Network adapters for $($selectedVM.Name):" -ForegroundColor Yellow
+        for ($i = 0; $i -lt $adapters.Count; $i++) {
+            Write-Host "[$($i+1)] $($adapters[$i].Name) - Current network: $($adapters[$i].NetworkName)"
+        }
+        
+        # Get adapter selection from user
+        $adapterIndex = Read-Host "Select adapter by number"
+        $selectedAdapterIndex = [int]$adapterIndex - 1
+    } else {
+        # Only one adapter, so just use index 0
+        $selectedAdapterIndex = 0
+        Write-Host "VM: $($selectedVM.Name)" -ForegroundColor Yellow
+        Write-Host "Network adapter: $($adapters[0].Name)" -ForegroundColor Yellow
+        Write-Host "Current network: $($adapters[0].NetworkName)" -ForegroundColor Yellow
+    }
+    
+    Write-Host ""  # Add blank line for readability
+    
+    # Display available networks - excluding Management Network, which is not for VMs
+    $networks = Get-VirtualPortGroup | Where-Object { $_.Name -ne "Management Network" }
+    Write-Host "Available networks:" -ForegroundColor Cyan
+    $index = 1
+    foreach ($network in $networks) {
+        # Number each network for easy selection
+        Write-Host "[$index] $($network.Name)"
+        $index++
+    }
+    
+    # Get network selection from user
+    $networkIndex = Read-Host "Select network by number"
+    $selectedNetwork = $networks[[int]$networkIndex - 1]
+    
+    # CCall the Set-Network function with parameters
+    Set-Network -vmName $selectedVM.Name -networkName $selectedNetwork.Name -adapterIndex $selectedAdapterIndex
+}
