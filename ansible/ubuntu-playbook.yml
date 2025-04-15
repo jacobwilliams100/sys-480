@@ -1,0 +1,69 @@
+- name: Ubuntu Config
+  hosts: ubuntu
+  tasks:
+    - name: create the .ssh directory if none exists
+      file:
+        path: "/home/{{ ansible_user }}/.ssh"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: 0700
+
+    - name: create authorized)keys file
+      file:
+        path: "/home/{{ ansible_user }}/.ssh/authorized_keys"
+        state: touch
+        mode: 0600
+
+    - name: copy over key blck and append to authorized_keys
+      blockinfile:
+        dest: "/home/{{ ansible_user }}/.ssh/authorized_keys"
+        block: "{{ public_key }}"
+      become: yes
+    
+    - name: create sudoers dropin file for 480
+      file:
+        path: /etc/sudoers.d/480
+        state: touch
+        mode: 0440
+      become: yes
+
+    - name: create a drop in entry in /etc/sudoers.d/480
+      blockinfile:
+        dest: /etc/sudoers.d/480
+        block: "{{ ansible_user }} ALL =(ALL) NOPASSWD:ALL"
+      become: yes
+
+    - name: add host to hosts file
+      lineinfile:
+        path: /etc/hosts
+        line: '127.0.1.1 {{ hostname }}'
+      become: yes
+
+    - name: set the hostname
+      hostname:
+        name: "{{hostname}}"
+      become: yes
+
+    - name: creaate netplan configuration file
+      template:
+        src: netplan.j2
+        dest: /etc/netplan/01-netplan.yaml
+        owner: root
+        group: root
+        mode: '0600'
+      become: yes
+
+    - name: Remove cloud-init netplan configuration
+      file:
+        path: "/etc/netplan/50-cloud-init.yaml"
+        state: absent
+      become: yes
+
+# it didn't like that I was sudo'ing after changing hostname, so we move this to the end.
+
+    - name: bounce da box
+      shell: "sleep 5 && shutdown -r"
+      become: yes
+      async: 1
+      poll: 0
