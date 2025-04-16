@@ -1,0 +1,36 @@
+- name: wazuh agent deployment for rocky
+  hosts: rockyclients
+  tasks:
+
+    - name: install wazuh agent (Rocky)
+      ansible.builtin.shell: |
+        WAZUH_MANAGER="{{ wazuh_manager_ip }}" WAZUH_AGENT_GROUP="{{ wazuh_agent_group }}" yum install https://packages.wazuh.com/4.x/yum/wazuh-agent-4.3.11-1.x86_64.rpm -y
+      args:
+        creates: /var/ossec/bin/wazuh-control
+      become: yes
+
+    - name: Start and enable wazuh agent
+      ansible.builtin.shell: |
+        systemctl daemon-reload
+        systemctl enable wazuh-agent
+        systemctl start wazuh-agent
+      become: yes
+
+- name: wazuh agent deployment for ubuntu
+  hosts: ubuntuclients
+  tasks:
+
+     - name: Install Wazuh agent (Ubuntu)
+       ansible.builtin.shell: |
+         curl -so wazuh-agent-4.3.11.deb https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_4.3.11-1_amd64.deb
+         WAZUH_MANAGER="{{ wazuh_manager_ip }}" WAZUH_AGENT_GROUP="{{ wazuh_agent_group }}" dpkg -i ./wazuh-agent-4.3.11.deb
+       args:
+         creates: /var/ossec/bin/wazuh-control
+       become: yes
+
+     - name: Start and enable wazuh agent
+       ansible.builtin.shell: |
+         systemctl daemon-reload
+         systemctl enable wazuh-agent
+         systemctl start wazuh-agent
+       become: yes

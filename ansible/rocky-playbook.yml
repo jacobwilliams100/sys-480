@@ -56,7 +56,7 @@
         method4: manual
       become: yes
 
-    - name: bounce da box
+    - name: bounce the box
       shell: "sleep 5 && shutdown -r"
       become: yes
       async: 1

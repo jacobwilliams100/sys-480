@@ -1,0 +1,39 @@
+- name: Ubuntu wazuh server stage 2
+  hosts: wazuhsrv2
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+      become: yes
+    - name: Install prerequisites
+      apt:
+        name:
+          - curl
+          - gnupg
+          - apt-transport-https
+        state: present
+      become: yes
+    # Wazuh installation
+    - name: Download Wazuh installation script
+      get_url:
+        url: https://packages.wazuh.com/4.3/wazuh-install.sh
+        dest: /tmp/wazuh-install.sh
+        mode: '0755'
+    - name: Run Wazuh installation script (non-interactive)
+      ansible.builtin.shell: bash /tmp/wazuh-install.sh -a -i
+      args:
+        creates: /var/ossec/bin/wazuh-control
+      register: wazuh_install
+      become: yes
+      
+    - name: Display installation results
+      debug:
+        var: wazuh_install.stdout_lines
+      when: wazuh_install.changed
+
+    - name: Change Wazuh admin password
+      ansible.builtin.shell: |
+        cd /usr/share/wazuh-indexer/plugins/opensearch-security/tools/
+        ./wazuh-passwords-tool.sh -u admin -p "{{ wazuh_admin_pass }}"
+      become: yes
+      when: wazuh_install.changed

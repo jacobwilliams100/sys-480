@@ -1,5 +1,5 @@
-- name: Ubuntu Config
-  hosts: ubuntu
+- name: wazuh server config stage 1
+  hosts: wazuhsrv1
   tasks:
     - name: create the .ssh directory if none exists
       file:
@@ -60,10 +60,10 @@
         state: absent
       become: yes
 
-# it didn't like that I was sudo'ing after changing hostname, so we move this to the end.
-
     - name: bounce the box
       shell: "sleep 5 && shutdown -r"
       become: yes
       async: 1
       poll: 0
+
+
