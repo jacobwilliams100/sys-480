@@ -1,6 +1,7 @@
-- name: wazuh server config stage 1
+- name: wazuh server config stage 1 # basically the exact same as rocky-playbook.yml, must be run before wazuh-server-playbook-2.yml
   hosts: wazuhsrv1
   tasks:
+
     - name: create the .ssh directory if none exists
       file:
         path: "/home/{{ ansible_user }}/.ssh"
@@ -9,13 +10,13 @@
         group: "{{ ansible_user }}"
         mode: 0700
 
-    - name: create authorized)keys file
+    - name: create authorized_keys file
       file:
         path: "/home/{{ ansible_user }}/.ssh/authorized_keys"
         state: touch
         mode: 0600
 
-    - name: copy over key blck and append to authorized_keys
+    - name: copy over key block and append to authorized_keys
       blockinfile:
         dest: "/home/{{ ansible_user }}/.ssh/authorized_keys"
         block: "{{ public_key }}"
@@ -45,7 +46,7 @@
         name: "{{hostname}}"
       become: yes
 
-    - name: creaate netplan configuration file
+    - name: create netplan configuration file
       template:
         src: netplan.j2
         dest: /etc/netplan/01-netplan.yaml
@@ -60,10 +61,10 @@
         state: absent
       become: yes
 
-    - name: bounce the box
+    - name: bounce the box #new netplan applies on boot
       shell: "sleep 5 && shutdown -r"
       become: yes
       async: 1
       poll: 0
 
-
+# Wait like 3 minutes after completing this playbook before running wazuh-server-playbook-1.yml.

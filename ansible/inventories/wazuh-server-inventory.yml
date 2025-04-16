@@ -1,30 +1,34 @@
 linux:
   hosts:
   children:
-    wazuhsrv1:
+    wazuhsrv1: # wazuh server pre stage-1
       hosts:
         10.0.5.89:
           hostname: ubuntu-wazuh-server
           lan_ip: 10.0.5.20
+          wazuh_admin_pass: S0dapop7000? # hardcoded password to replace randomly-generated password with
       vars:
         device: ens33
-    wazuhsrv2:
+        ansible_user: rangeuser
+    wazuhsrv2: # wazuh server post stage-1
       hosts:
         10.0.5.20:
-    rockyclients:
+      vars:
+        ansible_user: rangeuser
+    rockyclients: # for pushing client to rocky VMs
       hosts:
         10.0.5.10:
         10.0.5.11:
         10.0.5.12:
       vars:
-            ansible_user: deployer
-    ubuntuclients:
+        ansible_user: deployer
+    ubuntuclients: # for pushing client to Ubuntu VMs
       hosts:
         10.0.5.30:
         10.0.5.31:
       vars:
-            ansible_user: rangeuser
-  vars:
+        ansible_user: rangeuser
+  vars: # needed for provisioning the Wazuh server
     wazuh_manager_ip: 10.0.5.20
     wazuh_agent_group: default
     public_key: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC1E19eIDCvFEV6g2auxBtzErtJRq7NFzNaFonPkQV6XzZQmQZORQQgsv9wJ0d/nCk6dbeuLmCUsleNRHYLkGC6O9myDMM2kZTvT9eGbEbITK97qmB2yAx/43Sd/iqV6BKLYRwIsUveSYr0HI8HaJxNa92kg0OSrotM7nreU1tkfWpFcDOKOyy6mK70/vDikFIrRmtasxjXaFGuCh+vG9QnLIFzoxIFIcydfr06jD2PaLQZgN2YU+0oBz49Kf6l+cZ+MM1Sf5hJ8sahb2idfTUYG22SFpfGW6xq4V5TC+Z8Rxo4Xp6moSbLdceeThvZggX1RdNy4jYgtdB/UHnuP5FmJiHR3jzDMJpMiSepkDBnXR/f3CSlDbfWYDpany6zw/g+oz+jyg78ZHo+cDRk9VbBAhhEpfII43v1NVNI4mBKRsOA4pd7KyEe/9hOVswNqJzhrF+nckmBd5rGBgtg9Bq0BtWltMefcvkyKXu9rhyGvGWBo5ZbFT5md1MTsWI6FHU= jake@xubuntu-wan"
@@ -32,4 +36,3 @@ linux:
     gateway: 10.0.5.2
     name_server: 10.0.5.5
     domain: blue10.local
-    wazuh_admin_pass: S0dapop7000?

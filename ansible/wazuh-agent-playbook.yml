@@ -1,15 +1,16 @@
-- name: wazuh agent deployment for rocky
+# run after installing Wazuh server
+- name: Wazuh agent deployment for rocky
   hosts: rockyclients
   tasks:
 
-    - name: install wazuh agent (Rocky)
+    - name: install wazuh agent (Rocky) # Wazuh web interface gives us instructions for installing Wazuh client on rocky linux; we simply run these as a shell
       ansible.builtin.shell: |
         WAZUH_MANAGER="{{ wazuh_manager_ip }}" WAZUH_AGENT_GROUP="{{ wazuh_agent_group }}" yum install https://packages.wazuh.com/4.x/yum/wazuh-agent-4.3.11-1.x86_64.rpm -y
       args:
         creates: /var/ossec/bin/wazuh-control
       become: yes
 
-    - name: Start and enable wazuh agent
+    - name: Start and enable wazuh agent # needs to start agent too
       ansible.builtin.shell: |
         systemctl daemon-reload
         systemctl enable wazuh-agent
@@ -20,7 +21,7 @@
   hosts: ubuntuclients
   tasks:
 
-     - name: Install Wazuh agent (Ubuntu)
+     - name: Install Wazuh agent (Ubuntu) # Same process, just a little bit different for Ubuntu hosts
        ansible.builtin.shell: |
          curl -so wazuh-agent-4.3.11.deb https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_4.3.11-1_amd64.deb
          WAZUH_MANAGER="{{ wazuh_manager_ip }}" WAZUH_AGENT_GROUP="{{ wazuh_agent_group }}" dpkg -i ./wazuh-agent-4.3.11.deb
@@ -28,7 +29,7 @@
          creates: /var/ossec/bin/wazuh-control
        become: yes
 
-     - name: Start and enable wazuh agent
+     - name: Start and enable wazuh agent # also needs to start agent
        ansible.builtin.shell: |
          systemctl daemon-reload
          systemctl enable wazuh-agent
