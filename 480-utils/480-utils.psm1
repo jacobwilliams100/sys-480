@@ -904,3 +904,190 @@ Function Handle-SetNetwork()
     # CCall the Set-Network function with parameters
     Set-Network -vmName $selectedVM.Name -networkName $selectedNetwork.Name -adapterIndex $selectedAdapterIndex
 }
+
+# Sets a static IP address on a Windows VM using VMware Tools
+# This function executes PowerShell commands inside a Windows guest VM to configure network settings
+Function Set-WindowsIP {
+    param(
+        # Name of the virtual machine to configure
+        [Parameter(Mandatory=$true)]
+        [string]$VMName,
+        
+        # Static IP address to assign to the VM (e.g., 10.0.5.5)
+        [Parameter(Mandatory=$true)]
+        [string]$IPAddress,
+        
+        # Subnet mask in dotted decimal notation (e.g., 255.255.255.0)
+        [Parameter(Mandatory=$true)]
+        [string]$SubnetMask,
+        
+        # Default gateway IP address for the network
+        [Parameter(Mandatory=$true)]
+        [string]$Gateway,
+        
+        # DNS server IP address(es) to configure
+        [Parameter(Mandatory=$true)]
+        [string]$DNS,
+        
+        # Username with administrative privileges in the guest OS
+        [Parameter(Mandatory=$true)]
+        [string]$GuestUser,
+        
+        # Password for the guest OS user (as a secure string for security)
+        [Parameter(Mandatory=$false)]
+        [System.Security.SecureString]$GuestPassword
+    )
+    
+    try {
+        # Retrieve the VM object from vCenter inventory using its name
+        # ErrorAction Stop ensures errors are caught in the catch block
+        $vm = Get-VM -Name $VMName -ErrorAction Stop
+        
+        # Verify that the VM exists in the inventory
+        if (!$vm) {
+            Write-Host "VM '$VMName' not found." -ForegroundColor Red
+            return
+        }
+        
+        # Ensure the VM is powered on before attempting to configure network
+        # Invoke-VMScript requires the VM to be running and accessible
+        if ($vm.PowerState -ne "PoweredOn") {
+            Write-Host "VM '$VMName' is not powered on. Please start the VM first." -ForegroundColor Yellow
+            return
+        }
+        
+        # If GuestPassword wasn't provided as a SecureString, prompt for it securely
+        # This prevents the password from being visible in plain text
+        if (!$GuestPassword) {
+            $GuestPassword = Read-Host "Enter password for $GuestUser" -AsSecureString
+        }
+        
+        # Convert SecureString to NetworkCredential for Invoke-VMScript
+        # Invoke-VMScript requires credentials in this format
+        $credential = New-Object System.Management.Automation.PSCredential($GuestUser, $GuestPassword)
+        
+        # Prepare the PowerShell script to run inside the VM
+        # This script will:
+        # 1. Find active network adapter
+        # 2. Remove existing IP configuration
+        # 3. Set new static IP settings
+        # 4. Configure DNS server
+        # 5. Display the new configuration for verification
+        $scriptText = @"
+# Get the network adapter (assuming it's named 'Ethernet0' - adjust as needed)
+# Looks for active adapters with names starting with 'Ethernet'
+`$adapter = Get-NetAdapter | Where-Object { `$_.Status -eq 'Up' -and `$_.Name -like 'Ethernet*' } | Select-Object -First 1
+`$interfaceName = `$adapter.Name
+Write-Host "Found network adapter: `$interfaceName"
+
+# Remove any existing IP addresses to avoid conflicts
+# This ensures clean configuration by removing previous settings
+Remove-NetIPAddress -InterfaceAlias `$interfaceName -AddressFamily IPv4 -Confirm:`$false -ErrorAction SilentlyContinue
+
+# Remove existing default gateway to prepare for new gateway
+# This prevents routing conflicts with multiple default gateways
+Remove-NetRoute -InterfaceAlias `$interfaceName -AddressFamily IPv4 -Confirm:`$false -ErrorAction SilentlyContinue
+
+# Set the new static IP configuration
+# Uses PrefixLength 24 which corresponds to 255.255.255.0 subnet mask
+New-NetIPAddress -InterfaceAlias `$interfaceName -IPAddress $IPAddress -PrefixLength 24 -DefaultGateway $Gateway
+
+# Set DNS server - critical for name resolution
+# Can be configured with multiple servers if needed
+Set-DnsClientServerAddress -InterfaceAlias `$interfaceName -ServerAddresses $DNS
+
+# Display the new network configuration for verification
+# Shows IP address details including status
+Write-Host "New network configuration:"
+Get-NetIPAddress -InterfaceAlias `$interfaceName -AddressFamily IPv4 | Format-Table
+
+# Shows routing table with default gateway
+Get-NetRoute -InterfaceAlias `$interfaceName -AddressFamily IPv4 | Format-Table
+
+# Shows DNS configuration
+Get-DnsClientServerAddress -InterfaceAlias `$interfaceName | Format-Table
+"@
+
+        # Execute the script in the VM via VMware Tools
+        # Displays the configuration being applied for transparency
+        Write-Host "Setting static IP address on VM '$VMName'..." -ForegroundColor Cyan
+        Write-Host "IP: $IPAddress, Subnet: $SubnetMask, Gateway: $Gateway, DNS: $DNS" -ForegroundColor Cyan
+        
+        # Uses Invoke-VMScript to execute PowerShell commands in the guest OS
+        # This is only possible when VMware Tools is installed and running
+        $result = Invoke-VMScript -VM $vm -ScriptText $scriptText -GuestUser $credential.UserName -GuestPassword $credential.Password -ScriptType PowerShell
+        
+        # Display the result output from the VM for user verification
+        if ($result.ScriptOutput) {
+            Write-Host "Script execution results:" -ForegroundColor Green
+            Write-Host $result.ScriptOutput
+        }
+        
+        # Check if the configuration was successful based on exit code
+        if ($result.ExitCode -eq 0) {
+            Write-Host "Static IP configuration completed successfully." -ForegroundColor Green
+        } else {
+            Write-Host "Static IP configuration completed with exit code: $($result.ExitCode)" -ForegroundColor Yellow
+        }
+    }
+    catch {
+        # Comprehensive error handling with detailed error message
+        # This helps diagnose issues with connectivity, credentials, or script execution
+        Write-Host "Error configuring static IP: $_" -ForegroundColor Red
+    }
+}
+
+# Provides user interface for setting static IP on a Windows VM
+# This function handles user interaction and parameter collection before passing to Set-WindowsIP
+Function Handle-SetWindowsIP {
+    # Get all VMs that are currently powered on
+    # Only powered-on VMs can be configured since Invoke-VMScript requires the VM to be running
+    $allVMs = Get-VM | Where-Object { $_.PowerState -eq "PoweredOn" }
+    
+    # Check if there are any powered-on VMs available
+    # If not, instruct the user to power on a VM first
+    if ($allVMs.Count -eq 0) {
+        Write-Host "No powered-on VMs found. Please start a VM first." -ForegroundColor Yellow
+        return
+    }
+    
+    # Display a numbered list of available powered-on VMs for selection
+    # This makes it easier for users to select the correct VM
+    Write-Host "Available powered-on VMs:" -ForegroundColor Cyan
+    $index = 1
+    foreach ($vm in $allVMs) {
+        Write-Host "[$index] $($vm.Name)"
+        $index++
+    }
+    
+    # Get user's VM selection by number and validate input
+    # This prevents index out of range errors from invalid selections
+    $vmIndex = Read-Host "Select VM by number"
+    if (-not [int]::TryParse($vmIndex, [ref]$null) -or [int]$vmIndex -lt 1 -or [int]$vmIndex -gt $allVMs.Count) {
+        Write-Host "Invalid selection." -ForegroundColor Red
+        return
+    }
+    
+    # Get the selected VM object based on the index
+    # Using array indexing to retrieve the selected VM (subtracting 1 for zero-based indexing)
+    $selectedVM = $allVMs[[int]$vmIndex - 1]
+    $vmName = $selectedVM.Name
+    
+    # Prompt for all required network configuration parameters
+    # These follow standard networking conventions for clarity
+    Write-Host "Setting static IP for VM: $vmName" -ForegroundColor Yellow
+    $ipAddress = Read-Host "Enter IP Address (e.g., 10.0.5.5)"
+    $subnetMask = Read-Host "Enter Subnet Mask (e.g., 255.255.255.0)"
+    $gateway = Read-Host "Enter Default Gateway"
+    $dns = Read-Host "Enter DNS Server"
+    
+    # Get guest OS credentials securely
+    # Username is typically Administrator for Windows VMs
+    # Password is collected as a SecureString for security
+    $guestUser = Read-Host "Enter guest OS username (e.g., Administrator)"
+    $guestPassword = Read-Host "Enter guest OS password" -AsSecureString
+    
+    # Call the main function with all collected parameters
+    # This separates UI logic from the core IP configuration functionality
+    Set-WindowsIP -VMName $vmName -IPAddress $ipAddress -SubnetMask $subnetMask -Gateway $gateway -DNS $dns -GuestUser $guestUser -GuestPassword $guestPassword
+}

@@ -1,0 +1,57 @@
+- name: DC-BLUE10 stage 2, create forest/domain
+  hosts: windows
+  gather_facts: no
+  vars_prompt:
+    - name: safe_mode_password
+      prompt: "Enter the DSRM password"
+      private: yes
+
+  tasks:
+    # Step 1: Install ADDS
+    - name: Install ADDS
+      raw: |
+        $feature = Install-WindowsFeature -Name AD-Domain-Services -IncludeManagementTools
+        if ($feature.Success) {
+          Write-Output "AD-Domain-Services installed successfully"
+        } else {
+          Write-Output "Failed to install AD-Domain-Services: $($feature.ExitCode)"
+          exit 1
+        }
+      register: ad_install_result
+
+    - name: Display AD install result
+      debug:
+        var: ad_install_result.stdout_lines
+
+    # Step 2: Create forest and domain
+    - name: Create AD forest and domain
+      raw: |
+        $password = ConvertTo-SecureString "{{ safe_mode_password }}" -AsPlainText -Force
+
+        # Import necessary module
+        Import-Module ADDSDeployment
+
+        # Create forest and domain
+        $result = Install-ADDSForest `
+          -CreateDnsDelegation:$false `
+          -DatabasePath "C:\Windows\NTDS" `
+          -DomainMode "WinThreshold" `
+          -DomainName "{{ domain_name }}" `
+          -DomainNetbiosName "{{ netbios_name }}" `
+          -ForestMode "WinThreshold" `
+          -InstallDns:$true `
+          -LogPath "C:\Windows\NTDS" `
+          -NoRebootOnCompletion:$false `
+          -SysvolPath "C:\Windows\SYSVOL" `
+          -SafeModeAdministratorPassword $password `
+          -Force:$true `
+          -ErrorAction Stop
+
+         Write-Output "Domain creation initiated"
+      register: domain_create_result
+
+    - name: Display domain creation result
+      debug:
+        var: domain_create_result.stdout_lines
+
+    # VM will automatically restart following domain creation.

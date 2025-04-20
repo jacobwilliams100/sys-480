@@ -23,7 +23,7 @@
         mode: '0755'
 
     - name: Run Wazuh installation script (non-interactive) # runs the script to install wazuh
-      ansible.builtin.shell: bash /tmp/wazuh-install.sh -a -i
+      ansible.builtin.shell: bash /tmp/wazuh-install.sh -a -i #a installs all components, i ignores compatibility checks
       args:
         creates: /var/ossec/bin/wazuh-control
       register: wazuh_install

@@ -1,0 +1,12 @@
+windows:
+  hosts:
+    10.0.5.5:
+      hostname: DC-BLUE10
+      domain_name: blue10.local
+      netbios_name: BLUE
+      dhcp_name_server: 10.0.5.2
+      ou_name: BLUE10
+  vars:
+    ansible_connection: ssh
+    ansible_shell_type: powershell
+    ansible_user: deployer

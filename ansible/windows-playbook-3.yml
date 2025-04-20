@@ -1,0 +1,92 @@
+- name: Configure DC-BLUE10 stage 3, DNS Forwarder and OU structure
+  hosts: windows
+  gather_facts: no
+  
+  tasks:
+    # Step 1: Add DNS Forwarder
+    - name: Add DNS Server Forwarder
+      raw: |
+        Add-DnsServerForwarder -IPAddress "{{ dhcp_name_server }}"
+        Write-Output "DNS Forwarder added successfully"
+      register: dns_result
+    
+    - name: Display DNS forwarder result
+      debug:
+        var: dns_result.stdout_lines
+    
+    # Step 2: Create BLUE10 root OU
+    - name: Create BLUE10 root OU
+      raw: |
+          New-ADOrganizationalUnit -Name "BLUE10" -Path "DC=blue10,DC=local"
+          Write-Output "Created BLUE10 root OU"
+      register: blue10_ou_result
+    
+    - name: Display BLUE10 OU result
+      debug:
+        var: blue10_ou_result.stdout_lines
+        
+    # Step 3: Create Accounts OU under BLUE10
+    - name: Create Accounts OU
+      raw: |
+        New-ADOrganizationalUnit -Name "Accounts" -Path "OU=BLUE10,DC=blue10,DC=local"
+        Write-Output "Accounts OU created successfully"
+      register: accounts_ou_result
+    
+    - name: Display Accounts OU result
+      debug:
+        var: accounts_ou_result.stdout_lines
+
+    # Step 4: Create Groups OU under Accounts
+    - name: Create Groups OU
+      raw: |
+        New-ADOrganizationalUnit -Name "Groups" -Path "OU=Accounts,OU=BLUE10,DC=blue10,DC=local"
+        Write-Output "Groups OU created successfully"
+      register: groups_ou_result
+    
+    - name: Display Groups OU result
+      debug:
+        var: groups_ou_result.stdout_lines
+
+    # Step 5: Create Computers OU under BLUE10
+    - name: Create Computers OU
+      raw: |
+        New-ADOrganizationalUnit -Name "Computers" -Path "OU=BLUE10,DC=blue10,DC=local"
+        Write-Output "Computers OU created successfully"
+      register: computers_ou_result
+    
+    - name: Display Computers OU result
+      debug:
+        var: computers_ou_result.stdout_lines
+
+    # Step 6: Create Servers OU under Computers
+    - name: Create Servers OU
+      raw: |
+        New-ADOrganizationalUnit -Name "Servers" -Path "OU=Computers,OU=BLUE10,DC=blue10,DC=local"
+        Write-Output "Servers OU created successfully"
+      register: servers_result
+    
+    - name: Display Servers result
+      debug:
+        var: servers_result.stdout_lines
+        
+    # Step 7: Create Workstations OU under Computers
+    - name: Create Workstations OU
+      raw: |
+        New-ADOrganizationalUnit -Name "Workstations" -Path "OU=Computers,OU=BLUE10,DC=blue10,DC=local"
+        Write-Output "Workstations OU created successfully"
+      register: workstations_result
+      
+    - name: Display Workstations result
+      debug:
+        var: workstations_result.stdout_lines
+        
+    # Step 8: Verify all OUs were created
+    - name: Verify OU Structure
+      raw: |
+        Get-ADOrganizationalUnit -Filter * | Select-Object Name, DistinguishedName | Format-Table -AutoSize
+        Write-Output "OU structure verification complete"
+      register: verify_result
+    
+    - name: Display verification result
+      debug:
+        var: verify_result.stdout_lines

@@ -42,6 +42,7 @@ while ($continue) {
     Write-Host "4. Get VM IP/MAC Address"
     Write-Host "5. VM Power Management"
     Write-Host "6. Change VM Network"
+    Write-Host "7. Change VM IP (Windows)"
     $choice = Read-Host "Choose an option"
 
     # Process user's choice
@@ -77,6 +78,10 @@ while ($continue) {
     elseif ($choice -eq "6") {
         # Change VM network option
         Handle-SetNetwork
+    }
+    elseif ($choice -eq "7") {
+        # Set Windows Static IP option
+        Handle-SetWindowsIP
     }
     else {
         # Invalid option handling - loop will continue and prompt again

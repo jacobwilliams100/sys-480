@@ -1,0 +1,47 @@
+- name: DC-BLUE10 stage 1, changing local admin password and hostname
+  hosts: windows
+  gather_facts: no
+  vars_prompt:
+    - name: admin_password
+      prompt: "Enter the local administrator password"
+      private: yes
+  
+  tasks:
+    # Step 1: Set the local admin password
+    - name: Set local administrator password
+      raw: |
+        $password = ConvertTo-SecureString "{{ admin_password }}" -AsPlainText -Force
+        Set-LocalUser -Name "Administrator" -Password $password -PasswordNeverExpires $true
+        Write-Output "Administrator password set successfully"
+      register: password_result
+      
+    - name: Display password result
+      debug:
+        var: password_result.stdout_lines
+      
+    # Step 2: Check and set hostname
+    - name: Check current hostname
+      raw: $env:COMPUTERNAME
+      register: current_hostname
+
+    - name: Display current hostname
+      debug:
+        var: current_hostname.stdout_lines
+
+    - name: Set hostname if needed
+      raw: |
+        Rename-Computer -NewName "{{ hostname }}" -Force
+        Write-Output "Hostname changed to {{ hostname }}, reboot required"
+      when: current_hostname.stdout.strip() != hostname
+      register: hostname_result
+      ignore_errors: yes
+
+    - name: Display hostname result
+      debug:
+        var: hostname_result.stdout_lines
+      when: hostname_result is defined and hostname_result.stdout_lines is defined
+
+    # Step 3: reboot the server after hostname is changed.
+    - name: Reboot server
+      raw: Restart-Computer -Force
+      when: hostname_result is defined and hostname_result.changed

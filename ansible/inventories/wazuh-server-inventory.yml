@@ -6,7 +6,6 @@ linux:
         10.0.5.89:
           hostname: ubuntu-wazuh-server
           lan_ip: 10.0.5.20
-          wazuh_admin_pass: S0dapop7000? # hardcoded password to replace randomly-generated password with
       vars:
         device: ens33
         ansible_user: rangeuser
@@ -15,6 +14,7 @@ linux:
         10.0.5.20:
       vars:
         ansible_user: rangeuser
+        wazuh_admin_pass: S0dapop7000? # hardcoded password to replace randomly-generated password with
     rockyclients: # for pushing client to rocky VMs
       hosts:
         10.0.5.10:
