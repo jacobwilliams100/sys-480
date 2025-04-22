@@ -1,0 +1,100 @@
+---
+- name: Configure File Server 2019
+  hosts: file_server
+  gather_facts: no
+  
+  vars_prompt:
+    - name: admin_password
+      prompt: "Enter domain admin password"
+      private: yes
+  
+  tasks:
+    - name: Install File Server role
+      raw: |
+        Install-WindowsFeature -Name FS-FileServer -IncludeManagementTools
+        Write-Output "File Server role installed successfully"
+      register: fileserver_install
+    
+    - name: Install ADDS and GPMC
+      raw: |
+        Install-WindowsFeature -Name RSAT-AD-PowerShell, GPMC -IncludeManagementTools
+        Write-Output "ADDS and GPMC installed successfully"
+      register: ADDS_install
+    
+    - name: Change the hostname to hostname stored in inventory
+      ansible.windows.win_hostname:
+        name: "{{ hostname }}"
+      register: res
+    
+    - name: Reboot after hostname change
+      ansible.windows.win_reboot:
+      when: res.reboot_required
+    
+    - name: Join server to domain
+      raw: |
+        $domainPassword = ConvertTo-SecureString "{{ admin_password }}" -AsPlainText -Force
+        $credential = New-Object System.Management.Automation.PSCredential("{{ domain_admin }}", $domainPassword)
+        try {
+            Add-Computer -DomainName "{{ domain_name }}" -Credential $credential -Force
+            Write-Output "Successfully joined domain {{ domain_name }}"
+        } catch {
+            Write-Output "Error joining domain: $_"
+        }
+      register: domain_join
+    
+    - name: Reboot after domain join
+      ansible.windows.win_reboot:
+      when: domain_join.changed
+
+    - name: Create File Shares for AD Security Groups
+      raw: |
+        # Import required modules
+        Import-Module ActiveDirectory
+        Import-Module GroupPolicy
+
+        # Define variables - using vars from the playbook
+        $domain = "{{ domain_name }}"
+        $baseSharePath = "{{ file_share_path }}"
+        $ouPath = "{{ groups_ou_path }}"
+
+        # Create base share directory if it doesn't exist
+        if (-not (Test-Path -Path $baseSharePath)) {
+            New-Item -Path $baseSharePath -ItemType Directory -Force
+            Write-Host "Created base share directory: $baseSharePath"
+        }
+
+        # Get all security groups in the GROUPS OU
+        $securityGroups = Get-ADGroup -Filter * -SearchBase $ouPath
+
+        # Create shares for each security group
+        foreach ($group in $securityGroups) {
+            # Create folder for the share if it doesn't exist
+            $shareName = $group.Name
+            $sharePath = Join-Path -Path $baseSharePath -ChildPath $shareName
+            
+            if (-not (Test-Path -Path $sharePath)) {
+                New-Item -Path $sharePath -ItemType Directory -Force
+                Write-Host "Created folder: $sharePath"
+            }
+            
+            # Create share
+            $shareExists = Get-SmbShare -Name $shareName -ErrorAction SilentlyContinue
+            if (-not $shareExists) {
+                New-SmbShare -Name $shareName -Path $sharePath -Description "Share for $shareName" -FullAccess "Administrators" -ChangeAccess $shareName
+                Write-Host "Created share: $shareName with Read/Write permissions for $shareName group"
+            }
+            
+            # Set NTFS permissions
+            $acl = Get-Acl -Path $sharePath
+            
+            # Create rule for the security group with Modify rights
+            $groupSID = New-Object System.Security.Principal.SecurityIdentifier $group.SID
+            $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule($groupSID, "Modify", "ContainerInherit,ObjectInherit", "None", "Allow")
+            
+            # Add the new rule
+            $acl.AddAccessRule($accessRule)
+            
+            # Apply the ACL to the folder
+            Set-Acl -Path $sharePath -AclObject $acl
+            Write-Host "Set NTFS permissions for $shareName on $sharePath"
+        }

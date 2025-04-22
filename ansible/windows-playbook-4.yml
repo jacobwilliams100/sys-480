@@ -1,0 +1,166 @@
+- name: Domain Provisioning - Users and Groups
+  hosts: windows
+  gather_facts: no
+    
+  tasks:
+    # Create temp directory if it doesn't exist
+    - name: Create temp directory on domain controller
+      raw: |
+        New-Item -ItemType Directory -Path "C:\temp" -Force -ErrorAction SilentlyContinue | Out-Null
+      
+    # read the CSV file from the local control node
+    - name: Read CSV file content
+      ansible.builtin.slurp:
+        src: "{{ csv_file }}"
+      register: csv_content
+      delegate_to: localhost
+    
+    # Decode CSV content and parse lines
+    - name: Parse CSV content
+      set_fact:
+        csv_parsed: "{{ csv_content.content | b64decode | regex_replace('\r\n','\n') }}"
+    
+    - name: Split CSV into lines and skip header
+      set_fact:
+        csv_lines: "{{ csv_parsed.split('\n') | select | list | reject('search', '^[Cc]haracter,[Ss]tudio$') | list }}"
+    
+    # Create list of groups from the CSV
+    - name: Create list of unique groups
+      set_fact:
+        groups_list: "{{ csv_lines | map('split', ',') | map('last') | map('trim') | list | unique }}"
+    
+    # Create groups based on unique studios
+    - name: Create AD groups for each unique studio
+      raw: |
+        $groupName = "{{ item }}"
+        $groupPath = "{{ ou_groups_path }}"
+        
+        try {
+          # Check if group already exists
+          if (-not (Get-ADGroup -Filter {Name -eq $groupName} -SearchBase $groupPath -ErrorAction SilentlyContinue)) {
+            New-ADGroup -Name $groupName -Path $groupPath -GroupScope Global -GroupCategory Security
+            Write-Output "Created group: $groupName"
+          } else {
+            Write-Output "Group already exists: $groupName"
+          }
+        } catch {
+          Write-Output "Error creating group $groupName : $_"
+        }
+      with_items: "{{ groups_list }}"
+      register: group_creation_result
+    
+    # Create CSV header for passwords file
+    - name: Create password CSV header
+      raw: |
+        "Username,Password" | Out-File -FilePath "{{ temp_password_file }}" -Encoding UTF8
+        Write-Output "Created password CSV header"
+      register: password_csv_header
+    
+    # Create users with random passwords and assign to groups
+    - name: Create users with random passwords and assign to groups
+      raw: |
+        $line = "{{ item }}"
+        $parts = $line.Split(',')
+        
+        if ($parts.Count -ge 2) {
+          $userName = $parts[0].Trim()
+          $groupName = $parts[1].Trim()
+          $userPath = "{{ ou_users_path }}"
+          
+          # Generate a strong random password
+          $passwordChars = @()
+          
+          # Lowercase letters (5)
+          $lowercase = "abcdefghijklmnopqrstuvwxyz"
+          1..5 | ForEach-Object { $passwordChars += $lowercase[(Get-Random -Maximum $lowercase.Length)] }
+          
+          # Uppercase letters (5)
+          $uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+          1..5 | ForEach-Object { $passwordChars += $uppercase[(Get-Random -Maximum $uppercase.Length)] }
+          
+          # Numbers (3)
+          $numbers = "0123456789"
+          1..3 | ForEach-Object { $passwordChars += $numbers[(Get-Random -Maximum $numbers.Length)] }
+          
+          # Special characters (3)
+          $special = "!@#$%^&*()_+-=[]{}|;:,.<>?"
+          1..3 | ForEach-Object { $passwordChars += $special[(Get-Random -Maximum $special.Length)] }
+          
+          # Shuffle the characters
+          $password = ($passwordChars | Get-Random -Count $passwordChars.Count) -join ''
+          
+          $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
+          
+          try {
+            # Check if user already exists
+            if (-not (Get-ADUser -Filter {SamAccountName -eq $userName} -ErrorAction SilentlyContinue)) {
+              # Create user
+              New-ADUser -Name $userName `
+                        -SamAccountName $userName `
+                        -UserPrincipalName "$userName@{{ domain_name }}" `
+                        -Path $userPath `
+                        -AccountPassword $securePassword `
+                        -Enabled $true `
+                        -PasswordNeverExpires $true `
+                        -ChangePasswordAtLogon $false
+              
+              Write-Output "Created user: $userName with password"
+              
+              # Add user to group
+              if (Get-ADGroup -Filter {Name -eq $groupName} -ErrorAction SilentlyContinue) {
+                Add-ADGroupMember -Identity $groupName -Members $userName
+                Write-Output "Added $userName to group $groupName"
+              } else {
+                Write-Output "Warning: Group $groupName not found for user $userName"
+              }
+              
+              # Append to password CSV
+              "$userName,$password" | Out-File -FilePath "{{ temp_password_file }}" -Append -Encoding UTF8
+            } else {
+              Write-Output "User already exists: $userName"
+            }
+          } catch {
+            Write-Output "Error processing $userName : $_"
+          }
+        }
+      with_items: "{{ csv_lines }}"
+      register: user_creation_result
+    
+    # Fetch the password CSV from the domain controller
+    - name: Fetch password CSV from domain controller
+      fetch:
+        src: "{{ temp_password_file }}"
+        dest: "{{ password_csv_path }}"
+        flat: yes
+        fail_on_missing: yes
+      register: fetch_result
+    
+    # Clean up temp file on domain controller
+    - name: Clean up temp password file
+      raw: |
+        Remove-Item -Path "{{ temp_password_file }}" -Force
+        Write-Output "Deleted temporary password file"
+      register: cleanup_result
+    
+    # Verify the created users and groups
+    - name: Verify created users and groups
+      raw: |
+        Write-Output "=== GROUP MEMBERSHIPS ==="
+        Get-ADGroup -Filter * -SearchBase "{{ ou_groups_path }}" | ForEach-Object {
+          $groupName = $_.Name
+          $members = Get-ADGroupMember -Identity $_ | Select-Object -ExpandProperty Name
+          if ($members) {
+            Write-Output "$groupName : $($members -join ', ')"
+          } else {
+            Write-Output "$groupName : (no members)"
+          }
+        }
+      register: verification_result
+    
+    - name: Display verification results
+      debug:
+        var: verification_result.stdout_lines
+    
+    - name: Show location of password file
+      debug:
+        msg: "Password file saved to: {{ password_csv_path }}"

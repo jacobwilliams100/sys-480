@@ -10,3 +10,8 @@ windows:
     ansible_connection: ssh
     ansible_shell_type: powershell
     ansible_user: deployer
+    csv_file: characters.csv
+    ou_users_path: "OU=BLUE10,DC=blue10,DC=local"
+    ou_groups_path: "OU=Groups,OU=Accounts,OU=BLUE10,DC=blue10,DC=local"
+    password_csv_path: "/home/jake/Desktop/characters-passwords.csv"
+    temp_password_file: "C:\\temp_passwords.csv"

@@ -1,0 +1,11 @@
+win10:
+  hosts:
+    10.0.5.101:
+      hostname: WIN10-BLUE10
+      domain_name: "blue10.local"
+      domain_admin: "Administrator"
+      ansible_connection: winrm
+      ansible_winrm_transport: basic
+      ansible_user: deployer
+      ansible_winrm_server_cert_validation: ignore
+      ansible_winrm_port: 5985

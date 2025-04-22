@@ -1,0 +1,12 @@
+file_server:
+  hosts:
+    10.0.5.6:
+      hostname: FS-BLUE10
+  vars:
+    ansible_connection: ssh
+    ansible_shell_type: powershell
+    ansible_user: deployer
+    domain_name: blue10.local
+    domain_admin: Administrator
+    file_share_path: "C:\\Shares"
+    groups_ou_path: "OU=Groups,OU=Accounts,OU=BLUE10,DC=blue10,DC=local"
